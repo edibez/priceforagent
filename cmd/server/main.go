@@ -75,6 +75,20 @@ func main() {
 	r.GET("/v1/openapi.yaml", handleOpenAPI)
 	r.GET("/v1/function-schema", handleFunctionSchema)
 
+	// Admin endpoints (require admin key)
+	adminKey := os.Getenv("ADMIN_KEY")
+	if adminKey == "" {
+		adminKey = "admin_priceforagent_secret"
+	}
+	admin := r.Group("/admin")
+	admin.Use(adminAuthMiddleware(adminKey))
+	{
+		admin.GET("/stats", handleAdminStats)
+		admin.GET("/keys", handleAdminListKeys)
+		admin.GET("/usage/:key", handleAdminKeyUsage)
+		admin.GET("/daily", handleAdminDailyBreakdown)
+	}
+
 	// Protected endpoints (require API key)
 	protected := r.Group("/v1")
 	protected.Use(authMiddleware())
@@ -118,6 +132,21 @@ func authMiddleware() gin.HandlerFunc {
 		// Track usage after request
 		go authStore.IncrementUsage(key)
 		go rateLimiter.IncrementUsage(context.Background(), key)
+	}
+}
+
+func adminAuthMiddleware(adminKey string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		key := c.GetHeader("X-Admin-Key")
+		if key == "" {
+			key = c.Query("admin_key")
+		}
+		if key != adminKey {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid admin key"})
+			c.Abort()
+			return
+		}
+		c.Next()
 	}
 }
 
@@ -175,6 +204,115 @@ func handleRegister(c *gin.Context) {
 		"api_key":    apiKey.Key,
 		"message":    "API key generated successfully. Include this in X-API-Key header.",
 		"created_at": apiKey.CreatedAt,
+	})
+}
+
+// Admin handlers
+
+func handleAdminStats(c *gin.Context) {
+	ctx := context.Background()
+	
+	// Get global stats from Redis
+	globalStats, err := rateLimiter.GetGlobalStats(ctx)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	
+	// Get API key count from DB
+	keys, _ := authStore.ListKeys()
+	
+	c.JSON(http.StatusOK, gin.H{
+		"total_api_keys": len(keys),
+		"total_hits":     globalStats["total_hits"],
+		"today_hits":     globalStats["today_hits"],
+		"timestamp":      time.Now().Unix(),
+	})
+}
+
+func handleAdminListKeys(c *gin.Context) {
+	ctx := context.Background()
+	keys, err := authStore.ListKeys()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	
+	// Enrich with Redis stats
+	var enrichedKeys []gin.H
+	for _, k := range keys {
+		last24h, _ := rateLimiter.GetLast24HoursUsage(ctx, k.Key)
+		last7d, _ := rateLimiter.GetLast7DaysUsage(ctx, k.Key)
+		
+		enrichedKeys = append(enrichedKeys, gin.H{
+			"id":         k.ID,
+			"api_key":    k.Key[:16] + "...",
+			"agent_id":   k.AgentID,
+			"created_at": k.CreatedAt,
+			"hit_count":  k.HitCount,
+			"last_24h":   last24h,
+			"last_7d":    last7d,
+		})
+	}
+	
+	c.JSON(http.StatusOK, gin.H{
+		"count": len(keys),
+		"keys":  enrichedKeys,
+	})
+}
+
+func handleAdminKeyUsage(c *gin.Context) {
+	ctx := context.Background()
+	keyPrefix := c.Param("key")
+	
+	// Find full key
+	keys, _ := authStore.ListKeys()
+	var fullKey string
+	for _, k := range keys {
+		if len(k.Key) >= len(keyPrefix) && k.Key[:len(keyPrefix)] == keyPrefix {
+			fullKey = k.Key
+			break
+		}
+	}
+	
+	if fullKey == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Key not found"})
+		return
+	}
+	
+	// Get detailed stats
+	total, _ := rateLimiter.GetUsage(ctx, fullKey)
+	last24h, _ := rateLimiter.GetLast24HoursUsage(ctx, fullKey)
+	last7d, _ := rateLimiter.GetLast7DaysUsage(ctx, fullKey)
+	breakdown, _ := rateLimiter.GetDailyBreakdown(ctx, fullKey, 7)
+	
+	c.JSON(http.StatusOK, gin.H{
+		"api_key":        fullKey[:16] + "...",
+		"total":          total,
+		"last_24h":       last24h,
+		"last_7_days":    last7d,
+		"daily_breakdown": breakdown,
+	})
+}
+
+func handleAdminDailyBreakdown(c *gin.Context) {
+	ctx := context.Background()
+	days := 7
+	if d := c.Query("days"); d != "" {
+		if parsed, err := strconv.Atoi(d); err == nil && parsed > 0 && parsed <= 30 {
+			days = parsed
+		}
+	}
+	
+	breakdown, err := rateLimiter.GetGlobalDailyBreakdown(ctx, days)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	
+	c.JSON(http.StatusOK, gin.H{
+		"days":      days,
+		"breakdown": breakdown,
 	})
 }
 
