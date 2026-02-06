@@ -1,0 +1,189 @@
+openapi: 3.1.0
+info:
+  title: Price for Agent
+  description: LLM-friendly price service for crypto, stocks, and commodities
+  version: 1.0.0
+  contact:
+    name: Price for Agent Support
+
+servers:
+  - url: https://api.priceforagent.com/v1
+    description: Production
+  - url: http://localhost:8080/v1
+    description: Local development
+
+paths:
+  /query:
+    post:
+      operationId: naturalLanguageQuery
+      summary: Natural language price query
+      description: Ask about prices in natural language (e.g., "What's the price of Bitcoin?")
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueryRequest'
+            examples:
+              bitcoin:
+                value:
+                  query: "What's the price of Bitcoin?"
+              multiple:
+                value:
+                  query: "Show me BTC, ETH, and SOL prices"
+      responses:
+        '200':
+          description: Successful query
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /price/{pair}:
+    get:
+      operationId: getPrice
+      summary: Get price for a specific pair
+      parameters:
+        - name: pair
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Trading pair (e.g., BTC/USD, ETH/USD)
+          examples:
+            bitcoin:
+              value: BTC/USD
+            ethereum:
+              value: ETH/USD
+      responses:
+        '200':
+          description: Price data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /batch:
+    post:
+      operationId: batchQuery
+      summary: Get prices for multiple pairs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchRequest'
+            example:
+              pairs: ["BTC/USD", "ETH/USD", "SOL/USD"]
+      responses:
+        '200':
+          description: Batch results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchResponse'
+
+components:
+  schemas:
+    QueryRequest:
+      type: object
+      required:
+        - query
+      properties:
+        query:
+          type: string
+          description: Natural language query about prices
+          example: "What's the price of Bitcoin?"
+
+    QueryResponse:
+      type: object
+      properties:
+        query:
+          type: string
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/PriceResponse'
+        message:
+          type: string
+          description: Human-readable summary
+
+    PriceResponse:
+      type: object
+      properties:
+        pair:
+          type: string
+          example: BTC/USD
+        price:
+          type: number
+          format: double
+          example: 67234.50
+        currency:
+          type: string
+          example: USD
+        change_24h:
+          type: number
+          format: double
+          example: 2.3
+        timestamp:
+          type: string
+          format: date-time
+
+    BatchRequest:
+      type: object
+      required:
+        - pairs
+      properties:
+        pairs:
+          type: array
+          items:
+            type: string
+          example: ["BTC/USD", "ETH/USD"]
+
+    BatchResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/PriceResponse'
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/BatchError'
+
+    BatchError:
+      type: object
+      properties:
+        pair:
+          type: string
+        error:
+          type: string
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+        details:
+          type: string
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Pair not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
