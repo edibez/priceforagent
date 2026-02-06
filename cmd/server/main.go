@@ -238,13 +238,6 @@ func toPriceResponse(asset string, data *price.PriceData) PriceResponse {
 
 func splitCode(code string) []string {
 	// Crypto:ALL:BTC/USDT -> [Crypto, ALL, BTC, USDT]
-	var parts []string
-	for _, p := range []byte(code) {
-		if p == ':' || p == '/' {
-			continue
-		}
-	}
-	// Simple split
 	result := make([]string, 0)
 	current := ""
 	for _, c := range code {
