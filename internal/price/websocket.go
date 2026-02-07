@@ -19,6 +19,8 @@ type WSClient struct {
 	cacheMu   sync.RWMutex
 	done      chan struct{}
 	reconnect chan struct{}
+	pairs     []string // Store pairs for re-subscription
+	pairsMu   sync.RWMutex
 }
 
 // WSMessage represents a WebSocket message
@@ -67,6 +69,15 @@ func (w *WSClient) Connect() error {
 
 // Subscribe to price updates for given pairs
 func (w *WSClient) Subscribe(pairs []string) error {
+	// Store pairs for re-subscription on reconnect
+	w.pairsMu.Lock()
+	w.pairs = pairs
+	w.pairsMu.Unlock()
+
+	return w.doSubscribe(pairs)
+}
+
+func (w *WSClient) doSubscribe(pairs []string) error {
 	if w.conn == nil {
 		log.Println("WS Subscribe called but conn is nil")
 		return nil
@@ -185,6 +196,14 @@ func (w *WSClient) keepAlive() {
 				log.Printf("WS reconnect failed: %v", err)
 				// Try again after longer delay
 				time.Sleep(5 * time.Second)
+			} else {
+				// Re-subscribe after reconnect
+				w.pairsMu.RLock()
+				pairs := w.pairs
+				w.pairsMu.RUnlock()
+				if len(pairs) > 0 {
+					w.doSubscribe(pairs)
+				}
 			}
 		}
 	}
