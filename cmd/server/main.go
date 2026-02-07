@@ -22,12 +22,13 @@ import (
 )
 
 var (
-	priceClient   *price.Client
-	wsClient      *price.WSClient
-	authStore     *auth.Store
-	rateLimiter   *ratelimit.Limiter
-	rankingClient *ranking.CoinGecko
-	pairsSyncer   *pairs.Syncer
+	priceClient       *price.Client
+	wsClient          *price.WSClient
+	dynamicSubscriber *price.DynamicSubscriber
+	authStore         *auth.Store
+	rateLimiter       *ratelimit.Limiter
+	rankingClient     *ranking.CoinGecko
+	pairsSyncer       *pairs.Syncer
 )
 
 func main() {
@@ -91,28 +92,13 @@ func main() {
 	if err := wsClient.Connect(); err != nil {
 		log.Printf("WebSocket connection failed (will use HTTP fallback): %v", err)
 	} else {
-		log.Println("WebSocket connected, subscribing to top pairs...")
-		// Subscribe to top pairs (expanded list)
-		topPairs := []string{
-			// Top 20 Crypto
-			"Crypto:ALL:BTC/USDT", "Crypto:ALL:ETH/USDT", "Crypto:ALL:BNB/USDT",
-			"Crypto:ALL:XRP/USDT", "Crypto:ALL:SOL/USDT", "Crypto:ALL:DOGE/USDT",
-			"Crypto:ALL:ADA/USDT", "Crypto:ALL:TRX/USDT", "Crypto:ALL:AVAX/USDT",
-			"Crypto:ALL:SHIB/USDT", "Crypto:ALL:DOT/USDT", "Crypto:ALL:LINK/USDT",
-			"Crypto:ALL:MATIC/USDT", "Crypto:ALL:LTC/USDT", "Crypto:ALL:BCH/USDT",
-			"Crypto:ALL:UNI/USDT", "Crypto:ALL:ATOM/USDT", "Crypto:ALL:XLM/USDT",
-			"Crypto:ALL:FIL/USDT", "Crypto:ALL:NEAR/USDT",
-			// More altcoins
-			"Crypto:ALL:APT/USDT", "Crypto:ALL:ARB/USDT", "Crypto:ALL:OP/USDT",
-			"Crypto:ALL:INJ/USDT", "Crypto:ALL:AAVE/USDT", "Crypto:ALL:SUI/USDT",
-			"Crypto:ALL:SEI/USDT", "Crypto:ALL:PEPE/USDT", "Crypto:ALL:BONK/USDT",
-			"Crypto:ALL:WIF/USDT", "Crypto:ALL:RNDR/USDT", "Crypto:ALL:FET/USDT",
-			// Metals
-			"Metal:ALL:XAU/USD", "Metal:ALL:XAG/USD",
-		}
-		wsClient.Subscribe(topPairs)
+		log.Println("WebSocket connected")
 		defer wsClient.Close()
 	}
+	
+	// Initialize dynamic subscriber (top 10 + on-demand)
+	dynamicSubscriber = price.NewDynamicSubscriber(wsClient, redisClient)
+	dynamicSubscriber.Start(context.Background())
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -470,18 +456,32 @@ type PriceResponse struct {
 }
 
 // getPriceWithCache tries WS cache first, falls back to HTTP
+// Also triggers dynamic subscription for future requests
 func getPriceWithCache(code string) (*price.PriceData, string) {
+	ctx := context.Background()
+	
 	// Try WebSocket cache first
 	if wsClient != nil {
 		if data, ok := wsClient.GetCached(code); ok {
+			// Record access for dynamic subscriber
+			if dynamicSubscriber != nil {
+				dynamicSubscriber.OnPairRequested(ctx, code)
+			}
 			return data, "ws"
 		}
 	}
-	// Fallback to HTTP
+	
+	// Fallback to HTTP - also subscribe for future requests
 	data, err := priceClient.GetPrice(code)
 	if err != nil {
 		return nil, ""
 	}
+	
+	// Add to dynamic subscription for next time
+	if dynamicSubscriber != nil {
+		dynamicSubscriber.OnPairRequested(ctx, code)
+	}
+	
 	return data, "http"
 }
 
