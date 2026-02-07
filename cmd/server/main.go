@@ -6,19 +6,22 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/edibez/priceforagent/internal/ai"
 	"github.com/edibez/priceforagent/internal/auth"
 	"github.com/edibez/priceforagent/internal/price"
+	"github.com/edibez/priceforagent/internal/ranking"
 	"github.com/edibez/priceforagent/internal/ratelimit"
 	"github.com/gin-gonic/gin"
 )
 
 var (
-	priceClient *price.Client
-	authStore   *auth.Store
-	rateLimiter *ratelimit.Limiter
+	priceClient   *price.Client
+	authStore     *auth.Store
+	rateLimiter   *ratelimit.Limiter
+	rankingClient *ranking.CoinGecko
 )
 
 func main() {
@@ -65,6 +68,9 @@ func main() {
 	}
 	defer rateLimiter.Close()
 
+	// Initialize ranking client (CoinGecko)
+	rankingClient = ranking.NewCoinGecko()
+
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
@@ -99,6 +105,7 @@ func main() {
 		protected.POST("/batch", handleBatch)
 		protected.GET("/pairs", handlePairs)
 		protected.GET("/usage", handleUsage)
+		protected.GET("/top", handleTop)
 	}
 
 	log.Printf("Starting Price for Agent on :%s", port)
@@ -431,18 +438,56 @@ func handleBatch(c *gin.Context) {
 		return
 	}
 
-	var results []PriceResponse
-	var errors []gin.H
+	// Parallel fetch
+	type result struct {
+		index int
+		data  *PriceResponse
+		err   error
+		pair  string
+	}
 
-	for _, pair := range req.Pairs {
-		asset := ai.NormalizeAsset(pair)
-		code := ai.BuildCode(asset)
-		data, err := priceClient.GetPrice(code)
-		if err != nil {
-			errors = append(errors, gin.H{"pair": pair, "error": err.Error()})
-			continue
+	results := make([]PriceResponse, 0, len(req.Pairs))
+	errors := make([]gin.H, 0)
+	resultChan := make(chan result, len(req.Pairs))
+
+	var wg sync.WaitGroup
+	for i, pair := range req.Pairs {
+		wg.Add(1)
+		go func(idx int, p string) {
+			defer wg.Done()
+			asset := ai.NormalizeAsset(p)
+			code := ai.BuildCode(asset)
+			data, err := priceClient.GetPrice(code)
+			if err != nil {
+				resultChan <- result{index: idx, err: err, pair: p}
+				return
+			}
+			resp := toPriceResponse(asset, data)
+			resultChan <- result{index: idx, data: &resp, pair: p}
+		}(i, pair)
+	}
+
+	// Close channel when all goroutines done
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// Collect results maintaining order
+	ordered := make([]*PriceResponse, len(req.Pairs))
+	for r := range resultChan {
+		if r.err != nil {
+			errors = append(errors, gin.H{"pair": r.pair, "error": r.err.Error()})
+		} else {
+			ordered[r.index] = r.data
 		}
-		results = append(results, toPriceResponse(asset, data))
+	}
+
+	// Build final results (skip nils)
+	for _, r := range ordered {
+		if r != nil {
+			results = append(results, *r)
+		}
 	}
 
 	response := gin.H{"results": results}
@@ -450,6 +495,83 @@ func handleBatch(c *gin.Context) {
 		response["errors"] = errors
 	}
 	c.JSON(http.StatusOK, response)
+}
+
+func handleTop(c *gin.Context) {
+	limit := 10
+	if l := c.Query("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 100 {
+			limit = parsed
+		}
+	}
+
+	// Get top coins from CoinGecko (symbols + ranking info)
+	coins, err := rankingClient.GetTopCoins(limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch rankings", "details": err.Error()})
+		return
+	}
+
+	// Fetch prices in parallel from source
+	type priceResult struct {
+		index int
+		price *PriceResponse
+		err   error
+	}
+
+	priceChan := make(chan priceResult, len(coins))
+	var wg sync.WaitGroup
+
+	for i, coin := range coins {
+		wg.Add(1)
+		go func(idx int, symbol string) {
+			defer wg.Done()
+			asset := ai.NormalizeAsset(symbol)
+			code := ai.BuildCode(asset)
+			data, err := priceClient.GetPrice(code)
+			if err != nil {
+				priceChan <- priceResult{index: idx, err: err}
+				return
+			}
+			resp := toPriceResponse(asset, data)
+			priceChan <- priceResult{index: idx, price: &resp}
+		}(i, coin.Symbol)
+	}
+
+	go func() {
+		wg.Wait()
+		close(priceChan)
+	}()
+
+	// Collect prices
+	prices := make([]*PriceResponse, len(coins))
+	for r := range priceChan {
+		if r.err == nil {
+			prices[r.index] = r.price
+		}
+	}
+
+	// Build response with ranking + price
+	var results []gin.H
+	for i, coin := range coins {
+		entry := gin.H{
+			"rank":              coin.MarketCapRank,
+			"symbol":            coin.Symbol,
+			"name":              coin.Name,
+			"market_cap":        coin.MarketCap,
+			"price_change_24h":  coin.PriceChange24h,
+		}
+		if prices[i] != nil {
+			entry["price"] = prices[i].Price
+			entry["currency"] = prices[i].Currency
+		}
+		results = append(results, entry)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"limit":   limit,
+		"results": results,
+	})
 }
 
 func handlePairs(c *gin.Context) {
