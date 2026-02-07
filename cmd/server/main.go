@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -19,6 +20,7 @@ import (
 
 var (
 	priceClient   *price.Client
+	wsClient      *price.WSClient
 	authStore     *auth.Store
 	rateLimiter   *ratelimit.Limiter
 	rankingClient *ranking.CoinGecko
@@ -70,6 +72,29 @@ func main() {
 
 	// Initialize ranking client (CoinGecko)
 	rankingClient = ranking.NewCoinGecko()
+
+	// Initialize WebSocket client for real-time prices
+	wsURL := os.Getenv("WS_URL")
+	if wsURL == "" {
+		wsURL = "wss://ws.price.usenobi.com/v1"
+	}
+	wsClient = price.NewWSClient(wsURL, apiKey)
+	if err := wsClient.Connect(); err != nil {
+		log.Printf("WebSocket connection failed (will use HTTP fallback): %v", err)
+	} else {
+		log.Println("WebSocket connected, subscribing to top pairs...")
+		// Subscribe to top 50 crypto pairs
+		topPairs := []string{
+			"BTC_USDT", "ETH_USDT", "BNB_USDT", "XRP_USDT", "SOL_USDT",
+			"DOGE_USDT", "ADA_USDT", "TRX_USDT", "AVAX_USDT", "LINK_USDT",
+			"DOT_USDT", "MATIC_USDT", "SHIB_USDT", "LTC_USDT", "BCH_USDT",
+			"UNI_USDT", "ATOM_USDT", "XLM_USDT", "ETC_USDT", "FIL_USDT",
+			"NEAR_USDT", "APT_USDT", "ARB_USDT", "OP_USDT", "INJ_USDT",
+			"XAU_USDT", "XAG_USDT", // Gold & Silver
+		}
+		wsClient.Subscribe(topPairs)
+		defer wsClient.Close()
+	}
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -382,6 +407,23 @@ type PriceResponse struct {
 	Currency  string  `json:"currency"`
 	Market    string  `json:"market"`
 	Timestamp int64   `json:"timestamp"`
+	Source    string  `json:"source,omitempty"`
+}
+
+// getPriceWithCache tries WS cache first, falls back to HTTP
+func getPriceWithCache(code string) (*price.PriceData, string) {
+	// Try WebSocket cache first
+	if wsClient != nil {
+		if data, ok := wsClient.GetCached(code); ok {
+			return data, "ws"
+		}
+	}
+	// Fallback to HTTP
+	data, err := priceClient.GetPrice(code)
+	if err != nil {
+		return nil, ""
+	}
+	return data, "http"
 }
 
 func handleQuery(c *gin.Context) {
@@ -404,11 +446,13 @@ func handleQuery(c *gin.Context) {
 	var results []PriceResponse
 	for _, asset := range assets {
 		code := ai.BuildCode(asset)
-		data, err := priceClient.GetPrice(code)
-		if err != nil {
+		data, source := getPriceWithCache(code)
+		if data == nil {
 			continue
 		}
-		results = append(results, toPriceResponse(asset, data))
+		resp := toPriceResponse(asset, data)
+		resp.Source = source
+		results = append(results, resp)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -422,13 +466,15 @@ func handlePrice(c *gin.Context) {
 	asset := ai.NormalizeAsset(pair)
 	code := ai.BuildCode(asset)
 
-	data, err := priceClient.GetPrice(code)
-	if err != nil {
+	data, source := getPriceWithCache(code)
+	if data == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "pair not found", "pair": pair})
 		return
 	}
 
-	c.JSON(http.StatusOK, toPriceResponse(asset, data))
+	resp := toPriceResponse(asset, data)
+	resp.Source = source
+	c.JSON(http.StatusOK, resp)
 }
 
 func handleBatch(c *gin.Context) {
@@ -457,12 +503,13 @@ func handleBatch(c *gin.Context) {
 			defer wg.Done()
 			asset := ai.NormalizeAsset(p)
 			code := ai.BuildCode(asset)
-			data, err := priceClient.GetPrice(code)
-			if err != nil {
-				resultChan <- result{index: idx, err: err, pair: p}
+			data, source := getPriceWithCache(code)
+			if data == nil {
+				resultChan <- result{index: idx, err: fmt.Errorf("not found"), pair: p}
 				return
 			}
 			resp := toPriceResponse(asset, data)
+			resp.Source = source
 			resultChan <- result{index: idx, data: &resp, pair: p}
 		}(i, pair)
 	}
@@ -528,12 +575,13 @@ func handleTop(c *gin.Context) {
 			defer wg.Done()
 			asset := ai.NormalizeAsset(symbol)
 			code := ai.BuildCode(asset)
-			data, err := priceClient.GetPrice(code)
-			if err != nil {
-				priceChan <- priceResult{index: idx, err: err}
+			data, source := getPriceWithCache(code)
+			if data == nil {
+				priceChan <- priceResult{index: idx, err: fmt.Errorf("not found")}
 				return
 			}
 			resp := toPriceResponse(asset, data)
+			resp.Source = source
 			priceChan <- priceResult{index: idx, price: &resp}
 		}(i, coin.Symbol)
 	}
