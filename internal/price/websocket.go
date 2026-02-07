@@ -79,12 +79,9 @@ func (w *WSClient) Subscribe(pairs []string) error {
 
 func (w *WSClient) doSubscribe(pairs []string) error {
 	if w.conn == nil {
-		log.Println("WS Subscribe called but conn is nil")
 		return nil
 	}
 
-	log.Printf("WS subscribing to %d pairs...", len(pairs))
-	
 	// NOBI WS format: {method: "subscribe", params: {pairs: [...]}}
 	msg := map[string]interface{}{
 		"method": "subscribe",
@@ -93,11 +90,10 @@ func (w *WSClient) doSubscribe(pairs []string) error {
 		},
 	}
 	if err := w.conn.WriteJSON(msg); err != nil {
-		log.Printf("Failed to subscribe: %v", err)
+		log.Printf("WS subscribe failed: %v", err)
 		return err
 	}
 	
-	log.Println("WS subscribe message sent")
 	return nil
 }
 
@@ -129,31 +125,22 @@ func (w *WSClient) readPump() {
 		default:
 			_, message, err := w.conn.ReadMessage()
 			if err != nil {
-				// Ignore "bad close code" errors - NOBI uses non-standard codes
+				// Ignore "bad close code" and "no status" errors - NOBI uses non-standard codes
 				errStr := err.Error()
-				if !strings.Contains(errStr, "bad close code") {
+				if !strings.Contains(errStr, "bad close code") && !strings.Contains(errStr, "no status") {
 					log.Printf("WebSocket read error: %v", err)
 				}
 				return
 			}
 
-			// Log raw message for debugging (first 100 chars)
-			msgStr := string(message)
-			if len(msgStr) > 100 {
-				msgStr = msgStr[:100]
-			}
-			log.Printf("WS raw: %s", msgStr)
-
 			// Try to parse as price update (has "code" and "price" fields)
 			var update WSPriceUpdate
 			if err := json.Unmarshal(message, &update); err != nil {
-				log.Printf("WS parse error: %v", err)
 				continue
 			}
 
 			// Skip non-price messages (method responses, errors)
 			if update.Code == "" || update.Price == "" {
-				log.Printf("WS skip: code=%s price=%s", update.Code, update.Price)
 				continue
 			}
 
@@ -165,13 +152,7 @@ func (w *WSClient) readPump() {
 				Bid:    update.Bid,
 				Market: Market{Open: true}, // WS prices are live = market open
 			}
-			cacheSize := len(w.cache)
 			w.cacheMu.Unlock()
-			
-			// Log first few cache entries for debugging
-			if cacheSize <= 5 {
-				log.Printf("WS cached: %s (total: %d)", update.Code, cacheSize)
-			}
 		}
 	}
 }
