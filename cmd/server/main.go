@@ -152,12 +152,30 @@ func adminAuthMiddleware(adminKey string) gin.HandlerFunc {
 
 func rateLimitMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		ctx := context.Background()
 		key := c.GetHeader("X-API-Key")
 		if key == "" {
 			key = c.Query("api_key")
 		}
 
-		allowed, remaining, err := rateLimiter.Allow(context.Background(), key)
+		// Check global limit first
+		globalAllowed, globalRemaining, _ := rateLimiter.CheckGlobalLimit(ctx)
+		c.Header("X-Global-Limit", "10000000")
+		c.Header("X-Global-Remaining", strconv.FormatInt(globalRemaining, 10))
+		
+		if !globalAllowed {
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error":            "Global limit exceeded",
+				"message":          "Service has reached maximum capacity. Contact support for enterprise access.",
+				"global_limit":     10000000,
+				"global_remaining": 0,
+			})
+			c.Abort()
+			return
+		}
+
+		// Check per-key rate limit
+		allowed, remaining, err := rateLimiter.Allow(ctx, key)
 		if err != nil {
 			log.Printf("Rate limit error: %v", err)
 			c.Next()
@@ -169,9 +187,9 @@ func rateLimitMiddleware() gin.HandlerFunc {
 
 		if !allowed {
 			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error":     "Rate limit exceeded",
-				"limit":     2,
-				"remaining": remaining,
+				"error":       "Rate limit exceeded",
+				"limit":       2,
+				"remaining":   remaining,
 				"retry_after": 1,
 			})
 			c.Abort()
@@ -219,14 +237,19 @@ func handleAdminStats(c *gin.Context) {
 		return
 	}
 	
+	// Get global usage
+	globalUsage, _ := rateLimiter.GetGlobalUsage(ctx)
+	
 	// Get API key count from DB
 	keys, _ := authStore.ListKeys()
 	
 	c.JSON(http.StatusOK, gin.H{
-		"total_api_keys": len(keys),
-		"total_hits":     globalStats["total_hits"],
-		"today_hits":     globalStats["today_hits"],
-		"timestamp":      time.Now().Unix(),
+		"total_api_keys":   len(keys),
+		"global_usage":     globalUsage,
+		"global_limit":     10000000,
+		"global_remaining": 10000000 - globalUsage,
+		"today_hits":       globalStats["today_hits"],
+		"timestamp":        time.Now().Unix(),
 	})
 }
 

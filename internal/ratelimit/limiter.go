@@ -61,11 +61,17 @@ func (l *Limiter) Allow(ctx context.Context, key string) (bool, int, error) {
 	return count <= int64(l.limit), remaining, nil
 }
 
+// GlobalLimit is the total API calls allowed across all keys
+const GlobalLimit int64 = 10_000_000
+
 // IncrementUsage increments the usage counter for tracking
 func (l *Limiter) IncrementUsage(ctx context.Context, key string) error {
 	now := time.Now()
 	
-	// Total usage
+	// Global usage counter
+	l.client.Incr(ctx, "usage:global:total")
+	
+	// Total usage per key
 	l.client.Incr(ctx, fmt.Sprintf("usage:total:%s", key))
 	
 	// Daily usage (YYYYMMDD)
@@ -79,6 +85,31 @@ func (l *Limiter) IncrementUsage(ctx context.Context, key string) error {
 	l.client.Expire(ctx, hourKey, 25*time.Hour)
 	
 	return nil
+}
+
+// CheckGlobalLimit checks if global limit is exceeded
+func (l *Limiter) CheckGlobalLimit(ctx context.Context) (bool, int64, error) {
+	count, err := l.client.Get(ctx, "usage:global:total").Int64()
+	if err == redis.Nil {
+		return true, GlobalLimit, nil
+	}
+	if err != nil {
+		return true, GlobalLimit, err
+	}
+	remaining := GlobalLimit - count
+	if remaining < 0 {
+		remaining = 0
+	}
+	return count < GlobalLimit, remaining, nil
+}
+
+// GetGlobalUsage returns total global usage
+func (l *Limiter) GetGlobalUsage(ctx context.Context) (int64, error) {
+	count, err := l.client.Get(ctx, "usage:global:total").Int64()
+	if err == redis.Nil {
+		return 0, nil
+	}
+	return count, err
 }
 
 // GetUsage returns the total usage count
