@@ -68,9 +68,12 @@ func (w *WSClient) Connect() error {
 // Subscribe to price updates for given pairs
 func (w *WSClient) Subscribe(pairs []string) error {
 	if w.conn == nil {
+		log.Println("WS Subscribe called but conn is nil")
 		return nil
 	}
 
+	log.Printf("WS subscribing to %d pairs...", len(pairs))
+	
 	// NOBI WS format: {method: "subscribe", params: {pairs: [...]}}
 	msg := map[string]interface{}{
 		"method": "subscribe",
@@ -82,7 +85,8 @@ func (w *WSClient) Subscribe(pairs []string) error {
 		log.Printf("Failed to subscribe: %v", err)
 		return err
 	}
-
+	
+	log.Println("WS subscribe message sent")
 	return nil
 }
 
@@ -122,14 +126,23 @@ func (w *WSClient) readPump() {
 				return
 			}
 
+			// Log raw message for debugging (first 100 chars)
+			msgStr := string(message)
+			if len(msgStr) > 100 {
+				msgStr = msgStr[:100]
+			}
+			log.Printf("WS raw: %s", msgStr)
+
 			// Try to parse as price update (has "code" and "price" fields)
 			var update WSPriceUpdate
 			if err := json.Unmarshal(message, &update); err != nil {
+				log.Printf("WS parse error: %v", err)
 				continue
 			}
 
 			// Skip non-price messages (method responses, errors)
 			if update.Code == "" || update.Price == "" {
+				log.Printf("WS skip: code=%s price=%s", update.Code, update.Price)
 				continue
 			}
 
