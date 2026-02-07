@@ -33,9 +33,7 @@ type WSPriceUpdate struct {
 	Price  string `json:"price"`
 	Ask    string `json:"ask"`
 	Bid    string `json:"bid"`
-	Market struct {
-		Open bool `json:"open"`
-	} `json:"market"`
+	Market Market `json:"market"`
 }
 
 // NewWSClient creates a new WebSocket client
@@ -128,13 +126,11 @@ func (w *WSClient) readPump() {
 
 				w.cacheMu.Lock()
 				w.cache[update.Code] = &PriceData{
-					Code:  update.Code,
-					Price: update.Price,
-					Ask:   update.Ask,
-					Bid:   update.Bid,
-					Market: struct {
-						Open bool `json:"open"`
-					}{Open: update.Market.Open},
+					Code:   update.Code,
+					Price:  update.Price,
+					Ask:    update.Ask,
+					Bid:    update.Bid,
+					Market: update.Market,
 				}
 				w.cacheMu.Unlock()
 			}
