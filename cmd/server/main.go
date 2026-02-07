@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -119,6 +120,7 @@ func main() {
 
 	// Public endpoints (no auth)
 	r.GET("/health", handleHealth)
+	r.GET("/v1/info", handleInfo)
 	r.POST("/v1/register", handleRegister)
 	r.GET("/v1/openapi.yaml", handleOpenAPI)
 	r.GET("/v1/function-schema", handleFunctionSchema)
@@ -253,6 +255,46 @@ func rateLimitMiddleware() gin.HandlerFunc {
 
 func handleHealth(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "ok", "ts": time.Now().Unix()})
+}
+
+func handleInfo(c *gin.Context) {
+	ctx := context.Background()
+	
+	// Get pairs count from cache
+	allPairs, _ := pairsSyncer.GetAll(ctx)
+	totalPairs := len(allPairs)
+	
+	// Count by type
+	typeCounts := make(map[string]int)
+	for _, p := range allPairs {
+		// Extract type from code (e.g., "Crypto:ALL:BTC/USDT" -> "Crypto")
+		parts := strings.SplitN(p.Code, ":", 2)
+		if len(parts) > 0 {
+			typeCounts[parts[0]]++
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"service":     "Price for Agent (p4ai)",
+		"version":     "1.2.0",
+		"total_pairs": totalPairs,
+		"pair_types":  typeCounts,
+		"features": []string{
+			"Real-time crypto prices via WebSocket",
+			"Stocks (US, JP, HK, KR, EU)",
+			"Forex pairs",
+			"Commodities & Metals",
+			"Prediction markets",
+		},
+		"endpoints": gin.H{
+			"GET /v1/price/:pair": "Get price for a single asset",
+			"POST /v1/query":      "Natural language price query",
+			"POST /v1/batch":      "Batch price lookup",
+			"GET /v1/pairs":       "List all pairs (2700+)",
+			"GET /v1/top":         "Top coins by market cap",
+		},
+		"docs": "https://github.com/edibez/priceforagent",
+	})
 }
 
 func handleRegister(c *gin.Context) {
@@ -643,21 +685,33 @@ func handlePairs(c *gin.Context) {
 	ctx := context.Background()
 	search := c.Query("search")
 	
+	// Get total count from cache
+	allPairs, cacheErr := pairsSyncer.GetAll(ctx)
+	totalPairs := len(allPairs)
+	
 	// Try Redis cache first
 	if search != "" {
 		// Search mode
 		results, err := pairsSyncer.Search(ctx, search)
 		if err == nil && len(results) > 0 {
-			c.JSON(http.StatusOK, gin.H{"pairs": results, "count": len(results), "source": "cache"})
+			c.JSON(http.StatusOK, gin.H{
+				"pairs":  results,
+				"count":  len(results),
+				"total":  totalPairs,
+				"source": "cache",
+			})
 			return
 		}
-	} else {
-		// Get all from cache
-		allPairs, err := pairsSyncer.GetAll(ctx)
-		if err == nil && len(allPairs) > 0 {
-			c.JSON(http.StatusOK, gin.H{"pairs": allPairs, "count": len(allPairs), "source": "cache"})
-			return
-		}
+	} else if cacheErr == nil && totalPairs > 0 {
+		// Return all from cache with pagination info
+		c.JSON(http.StatusOK, gin.H{
+			"pairs":  allPairs,
+			"count":  totalPairs,
+			"total":  totalPairs,
+			"source": "cache",
+			"note":   "2700+ pairs available. Use ?search=XXX to filter.",
+		})
+		return
 	}
 
 	// Fallback to direct API
@@ -671,7 +725,11 @@ func handlePairs(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"pairs": pairsData, "source": "api"})
+	c.JSON(http.StatusOK, gin.H{
+		"pairs":  pairsData,
+		"source": "api",
+		"note":   "Paginated response. Total 2700+ pairs available.",
+	})
 }
 
 func handleOpenAPI(c *gin.Context) {
