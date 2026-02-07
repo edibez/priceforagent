@@ -12,10 +12,12 @@ import (
 
 	"github.com/edibez/priceforagent/internal/ai"
 	"github.com/edibez/priceforagent/internal/auth"
+	"github.com/edibez/priceforagent/internal/pairs"
 	"github.com/edibez/priceforagent/internal/price"
 	"github.com/edibez/priceforagent/internal/ranking"
 	"github.com/edibez/priceforagent/internal/ratelimit"
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -24,6 +26,7 @@ var (
 	authStore     *auth.Store
 	rateLimiter   *ratelimit.Limiter
 	rankingClient *ranking.CoinGecko
+	pairsSyncer   *pairs.Syncer
 )
 
 func main() {
@@ -72,6 +75,11 @@ func main() {
 
 	// Initialize ranking client (CoinGecko)
 	rankingClient = ranking.NewCoinGecko()
+
+	// Initialize pairs syncer (daily sync to Redis)
+	redisClient := redis.NewClient(&redis.Options{Addr: redisAddr})
+	pairsSyncer = pairs.NewSyncer(sourceURL, apiKey, redisClient)
+	pairsSyncer.StartDailySync(context.Background())
 
 	// Initialize WebSocket client for real-time prices
 	wsURL := os.Getenv("WS_URL")
@@ -632,17 +640,38 @@ func handleTop(c *gin.Context) {
 }
 
 func handlePairs(c *gin.Context) {
+	ctx := context.Background()
+	search := c.Query("search")
+	
+	// Try Redis cache first
+	if search != "" {
+		// Search mode
+		results, err := pairsSyncer.Search(ctx, search)
+		if err == nil && len(results) > 0 {
+			c.JSON(http.StatusOK, gin.H{"pairs": results, "count": len(results), "source": "cache"})
+			return
+		}
+	} else {
+		// Get all from cache
+		allPairs, err := pairsSyncer.GetAll(ctx)
+		if err == nil && len(allPairs) > 0 {
+			c.JSON(http.StatusOK, gin.H{"pairs": allPairs, "count": len(allPairs), "source": "cache"})
+			return
+		}
+	}
+
+	// Fallback to direct API
 	assetType := c.Query("type")
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	perPage, _ := strconv.Atoi(c.DefaultQuery("per_page", "20"))
+	perPage, _ := strconv.Atoi(c.DefaultQuery("per_page", "50"))
 
-	pairs, err := priceClient.GetPairs(assetType, page, perPage)
+	pairsData, err := priceClient.GetPairs(assetType, page, perPage)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"pairs": pairs})
+	c.JSON(http.StatusOK, gin.H{"pairs": pairsData, "source": "api"})
 }
 
 func handleOpenAPI(c *gin.Context) {
