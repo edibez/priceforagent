@@ -3,6 +3,7 @@ package price
 import (
 	"encoding/json"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -113,7 +114,11 @@ func (w *WSClient) readPump() {
 		default:
 			_, message, err := w.conn.ReadMessage()
 			if err != nil {
-				log.Printf("WebSocket read error: %v", err)
+				// Ignore "bad close code" errors - NOBI uses non-standard codes
+				errStr := err.Error()
+				if !strings.Contains(errStr, "bad close code") {
+					log.Printf("WebSocket read error: %v", err)
+				}
 				return
 			}
 
@@ -136,12 +141,18 @@ func (w *WSClient) readPump() {
 				Bid:    update.Bid,
 				Market: Market{Open: true}, // WS prices are live = market open
 			}
+			cacheSize := len(w.cache)
 			w.cacheMu.Unlock()
+			
+			// Log first few cache entries for debugging
+			if cacheSize <= 5 {
+				log.Printf("WS cached: %s (total: %d)", update.Code, cacheSize)
+			}
 		}
 	}
 }
 
-// keepAlive sends ping messages
+// keepAlive sends ping messages and handles reconnection
 func (w *WSClient) keepAlive() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
@@ -155,13 +166,22 @@ func (w *WSClient) keepAlive() {
 				w.conn.WriteMessage(websocket.PingMessage, nil)
 			}
 		case <-w.reconnect:
-			log.Println("Attempting to reconnect WebSocket...")
-			time.Sleep(5 * time.Second)
+			// Quick reconnect (NOBI WS tends to disconnect often)
+			time.Sleep(1 * time.Second)
 			if err := w.Connect(); err != nil {
-				log.Printf("Reconnect failed: %v", err)
+				log.Printf("WS reconnect failed: %v", err)
+				// Try again after longer delay
+				time.Sleep(5 * time.Second)
 			}
 		}
 	}
+}
+
+// CacheSize returns number of cached prices
+func (w *WSClient) CacheSize() int {
+	w.cacheMu.RLock()
+	defer w.cacheMu.RUnlock()
+	return len(w.cache)
 }
 
 // Close closes the WebSocket connection
