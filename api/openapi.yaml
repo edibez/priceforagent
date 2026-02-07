@@ -7,7 +7,7 @@ info:
     name: Price for Agent Support
 
 servers:
-  - url: http://43.128.84.212:8080/v1
+  - url: https://p4ai.bitharga.com/v1
     description: Production
   - url: http://localhost:8080/v1
     description: Local development
