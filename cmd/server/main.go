@@ -83,17 +83,13 @@ func main() {
 		log.Printf("WebSocket connection failed (will use HTTP fallback): %v", err)
 	} else {
 		log.Println("WebSocket connected, subscribing to top pairs...")
-		// Subscribe to top pairs (must match BuildCode format)
+		// Subscribe to available pairs (verified on NOBI)
 		topPairs := []string{
-			// Crypto (Crypto:ALL:XXX/USDT)
-			"Crypto:ALL:BTC/USDT", "Crypto:ALL:ETH/USDT", "Crypto:ALL:BNB/USDT",
-			"Crypto:ALL:XRP/USDT", "Crypto:ALL:SOL/USDT", "Crypto:ALL:DOGE/USDT",
-			"Crypto:ALL:ADA/USDT", "Crypto:ALL:TRX/USDT", "Crypto:ALL:AVAX/USDT",
-			"Crypto:ALL:LINK/USDT", "Crypto:ALL:DOT/USDT", "Crypto:ALL:MATIC/USDT",
-			"Crypto:ALL:SHIB/USDT", "Crypto:ALL:LTC/USDT", "Crypto:ALL:BCH/USDT",
-			"Crypto:ALL:UNI/USDT", "Crypto:ALL:ATOM/USDT", "Crypto:ALL:XLM/USDT",
-			// Metals (Metal:ALL:XXX/USD)
-			"Metal:ALL:XAU/USD", "Metal:ALL:XAG/USD",
+			// Crypto (Crypto:ALL:XXX/USDT) - verified available
+			"Crypto:ALL:BTC/USDT", "Crypto:ALL:ETH/USDT", "Crypto:ALL:DOGE/USDT",
+			"Crypto:ALL:ADA/USDT", "Crypto:ALL:DOT/USDT", "Crypto:ALL:LTC/USDT",
+			"Crypto:ALL:BCH/USDT", "Crypto:ALL:ATOM/USDT", "Crypto:ALL:NEAR/USDT",
+			"Crypto:ALL:AAVE/USDT", "Crypto:ALL:INJ/USDT", "Crypto:ALL:FIL/USDT",
 		}
 		wsClient.Subscribe(topPairs)
 		defer wsClient.Close()
