@@ -7,7 +7,7 @@ import (
 
 // Common asset aliases
 var assetAliases = map[string]string{
-	// Crypto
+	// Crypto - Major
 	"bitcoin":  "BTC",
 	"btc":      "BTC",
 	"ethereum": "ETH",
@@ -22,6 +22,48 @@ var assetAliases = map[string]string{
 	"doge":     "DOGE",
 	"bnb":      "BNB",
 	"binance":  "BNB",
+	
+	// Crypto - Top 50
+	"tron":      "TRX",
+	"trx":       "TRX",
+	"avalanche": "AVAX",
+	"avax":      "AVAX",
+	"shiba":     "SHIB",
+	"shib":      "SHIB",
+	"polkadot":  "DOT",
+	"dot":       "DOT",
+	"polygon":   "MATIC",
+	"matic":     "MATIC",
+	"chainlink": "LINK",
+	"link":      "LINK",
+	"litecoin":  "LTC",
+	"ltc":       "LTC",
+	"uniswap":   "UNI",
+	"uni":       "UNI",
+	"cosmos":    "ATOM",
+	"atom":      "ATOM",
+	"stellar":   "XLM",
+	"xlm":       "XLM",
+	"filecoin":  "FIL",
+	"fil":       "FIL",
+	"near":      "NEAR",
+	"aave":      "AAVE",
+	"injective": "INJ",
+	"inj":       "INJ",
+	"aptos":     "APT",
+	"apt":       "APT",
+	"arbitrum":  "ARB",
+	"arb":       "ARB",
+	"optimism":  "OP",
+	"op":        "OP",
+	"sui":       "SUI",
+	"pepe":      "PEPE",
+	"bonk":      "BONK",
+	"wif":       "WIF",
+	"render":    "RNDR",
+	"rndr":      "RNDR",
+	"kaspa":     "KAS",
+	"kas":       "KAS",
 	
 	// Stocks
 	"nvidia":    "NVDA",
@@ -58,10 +100,22 @@ var assetAliases = map[string]string{
 	"gbp":    "GBP",
 }
 
-// Asset type detection
+// Asset type detection - expanded list
 var cryptoAssets = map[string]bool{
-	"BTC": true, "ETH": true, "SOL": true, "XRP": true, "ADA": true,
-	"DOGE": true, "BNB": true, "AAVE": true, "LINK": true, "DOT": true,
+	// Top 10
+	"BTC": true, "ETH": true, "BNB": true, "XRP": true, "SOL": true,
+	"DOGE": true, "ADA": true, "TRX": true, "AVAX": true, "SHIB": true,
+	// Top 11-30
+	"DOT": true, "LINK": true, "MATIC": true, "LTC": true, "BCH": true,
+	"UNI": true, "ATOM": true, "XLM": true, "ETC": true, "FIL": true,
+	"NEAR": true, "APT": true, "ARB": true, "OP": true, "INJ": true,
+	"AAVE": true, "LDO": true, "KAVA": true, "SUI": true, "SEI": true,
+	// Memecoins
+	"PEPE": true, "BONK": true, "WIF": true, "FLOKI": true,
+	// AI/Infra
+	"RNDR": true, "FET": true, "AGIX": true, "TAO": true,
+	// Others
+	"KAS": true, "IMX": true, "STX": true, "RUNE": true, "GRT": true,
 }
 
 var equityAssets = map[string]bool{
