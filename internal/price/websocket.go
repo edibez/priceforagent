@@ -70,14 +70,16 @@ func (w *WSClient) Subscribe(pairs []string) error {
 		return nil
 	}
 
-	for _, pair := range pairs {
-		msg := map[string]interface{}{
-			"type":    "subscribe",
-			"channel": "price:" + pair,
-		}
-		if err := w.conn.WriteJSON(msg); err != nil {
-			log.Printf("Failed to subscribe to %s: %v", pair, err)
-		}
+	// NOBI WS format: {method: "subscribe", params: {pairs: [...]}}
+	msg := map[string]interface{}{
+		"method": "subscribe",
+		"params": map[string]interface{}{
+			"pairs": pairs,
+		},
+	}
+	if err := w.conn.WriteJSON(msg); err != nil {
+		log.Printf("Failed to subscribe: %v", err)
+		return err
 	}
 
 	return nil
@@ -95,7 +97,9 @@ func (w *WSClient) GetCached(code string) (*PriceData, bool) {
 // readPump reads messages from WebSocket
 func (w *WSClient) readPump() {
 	defer func() {
-		w.conn.Close()
+		if w.conn != nil {
+			w.conn.Close()
+		}
 		select {
 		case w.reconnect <- struct{}{}:
 		default:
@@ -113,27 +117,26 @@ func (w *WSClient) readPump() {
 				return
 			}
 
-			var msg WSMessage
-			if err := json.Unmarshal(message, &msg); err != nil {
+			// Try to parse as price update (has "code" and "price" fields)
+			var update WSPriceUpdate
+			if err := json.Unmarshal(message, &update); err != nil {
 				continue
 			}
 
-			if msg.Type == "price" {
-				var update WSPriceUpdate
-				if err := json.Unmarshal(msg.Data, &update); err != nil {
-					continue
-				}
-
-				w.cacheMu.Lock()
-				w.cache[update.Code] = &PriceData{
-					Code:   update.Code,
-					Price:  update.Price,
-					Ask:    update.Ask,
-					Bid:    update.Bid,
-					Market: update.Market,
-				}
-				w.cacheMu.Unlock()
+			// Skip non-price messages (method responses, errors)
+			if update.Code == "" || update.Price == "" {
+				continue
 			}
+
+			w.cacheMu.Lock()
+			w.cache[update.Code] = &PriceData{
+				Code:   update.Code,
+				Price:  update.Price,
+				Ask:    update.Ask,
+				Bid:    update.Bid,
+				Market: Market{Open: true}, // WS prices are live = market open
+			}
+			w.cacheMu.Unlock()
 		}
 	}
 }

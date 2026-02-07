@@ -83,14 +83,17 @@ func main() {
 		log.Printf("WebSocket connection failed (will use HTTP fallback): %v", err)
 	} else {
 		log.Println("WebSocket connected, subscribing to top pairs...")
-		// Subscribe to top 50 crypto pairs
+		// Subscribe to top pairs (must match BuildCode format)
 		topPairs := []string{
-			"BTC_USDT", "ETH_USDT", "BNB_USDT", "XRP_USDT", "SOL_USDT",
-			"DOGE_USDT", "ADA_USDT", "TRX_USDT", "AVAX_USDT", "LINK_USDT",
-			"DOT_USDT", "MATIC_USDT", "SHIB_USDT", "LTC_USDT", "BCH_USDT",
-			"UNI_USDT", "ATOM_USDT", "XLM_USDT", "ETC_USDT", "FIL_USDT",
-			"NEAR_USDT", "APT_USDT", "ARB_USDT", "OP_USDT", "INJ_USDT",
-			"XAU_USDT", "XAG_USDT", // Gold & Silver
+			// Crypto (Crypto:ALL:XXX/USDT)
+			"Crypto:ALL:BTC/USDT", "Crypto:ALL:ETH/USDT", "Crypto:ALL:BNB/USDT",
+			"Crypto:ALL:XRP/USDT", "Crypto:ALL:SOL/USDT", "Crypto:ALL:DOGE/USDT",
+			"Crypto:ALL:ADA/USDT", "Crypto:ALL:TRX/USDT", "Crypto:ALL:AVAX/USDT",
+			"Crypto:ALL:LINK/USDT", "Crypto:ALL:DOT/USDT", "Crypto:ALL:MATIC/USDT",
+			"Crypto:ALL:SHIB/USDT", "Crypto:ALL:LTC/USDT", "Crypto:ALL:BCH/USDT",
+			"Crypto:ALL:UNI/USDT", "Crypto:ALL:ATOM/USDT", "Crypto:ALL:XLM/USDT",
+			// Metals (Metal:ALL:XXX/USD)
+			"Metal:ALL:XAU/USD", "Metal:ALL:XAG/USD",
 		}
 		wsClient.Subscribe(topPairs)
 		defer wsClient.Close()
